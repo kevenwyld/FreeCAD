@@ -63,6 +63,8 @@ void DlgCustomizeSpNavSettings::setupConnections()
             this, &DlgCustomizeSpNavSettings::on_CBFlipYZ_clicked);
     connect(ui->CBRotations, &QCheckBox::clicked,
             this, &DlgCustomizeSpNavSettings::on_CBRotations_clicked);
+    connect(ui->CBViewCenterPivot, &QCheckBox::clicked,
+            this, &DlgCustomizeSpNavSettings::on_CBViewCenterPivot_clicked);
     connect(ui->CBTranslations, &QCheckBox::clicked,
             this, &DlgCustomizeSpNavSettings::on_CBTranslations_clicked);
     connect(ui->SliderGlobal, &QSlider::sliderReleased,
@@ -159,6 +161,7 @@ void DlgCustomizeSpNavSettings::initialize()
     ui->CBDominant->setChecked(spaceballMotionGroup()->GetBool("Dominant", false));
     ui->CBFlipYZ->setChecked(spaceballMotionGroup()->GetBool("FlipYZ", false));
     ui->CBRotations->setChecked(spaceballMotionGroup()->GetBool("Rotations", true));
+    ui->CBViewCenterPivot->setChecked(spaceballMotionGroup()->GetBool("ViewCenterPivot", true));
     ui->CBTranslations->setChecked(spaceballMotionGroup()->GetBool("Translations", true));
     ui->SliderGlobal->setValue(spaceballMotionGroup()->GetInt("GlobalSensitivity", 0));
 
@@ -236,6 +239,11 @@ void DlgCustomizeSpNavSettings::on_CBRotations_clicked()
     ui->CBEnableSpin->setEnabled(ui->CBRotations->isChecked());
     ui->CBReverseSpin->setEnabled(ui->CBRotations->isChecked() && ui->CBEnableSpin->isChecked());
     ui->SliderSpin->setEnabled(ui->CBRotations->isChecked() && ui->CBEnableSpin->isChecked());
+}
+
+void DlgCustomizeSpNavSettings::on_CBViewCenterPivot_clicked()
+{
+    spaceballMotionGroup()->SetBool("ViewCenterPivot", ui->CBViewCenterPivot->isChecked());
 }
 
 void DlgCustomizeSpNavSettings::on_CBTranslations_clicked()

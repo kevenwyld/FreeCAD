@@ -62,6 +62,19 @@
          </property>
         </widget>
        </item>
+       <item>
+        <widget class="QCheckBox" name="CBViewCenterPivot">
+         <property name="toolTip">
+          <string>When rotating with the SpaceMouse, pivot around the object under the center of the view.</string>
+         </property>
+         <property name="text">
+          <string>Rotate around object at view center</string>
+         </property>
+         <property name="checked">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
       </layout>
      </item>
      <item>
