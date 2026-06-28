@@ -53,6 +53,7 @@ protected:
     void on_CBDominant_clicked();
     void on_CBFlipYZ_clicked();
     void on_CBRotations_clicked();
+    void on_CBViewCenterPivot_clicked();
     void on_CBTranslations_clicked();
     void on_SliderGlobal_sliderReleased();
     void on_CBEnablePanLR_clicked();
