@@ -25,6 +25,8 @@
 #include <Inventor/SbViewportRegion.h>
 #include <Inventor/SoEventManager.h>
 #include <Inventor/SoPickedPoint.h>
+#include <Inventor/details/SoFaceDetail.h>
+#include <Inventor/SoRenderManager.h>
 #include <Inventor/actions/SoGetBoundingBoxAction.h>
 #include <Inventor/actions/SoHandleEventAction.h>
 #include <Inventor/actions/SoRayPickAction.h>
@@ -37,6 +39,7 @@
 #include <Inventor/nodes/SoOrthographicCamera.h>
 #include <Inventor/nodes/SoPerspectiveCamera.h>
 #include <Inventor/projectors/SbSphereSheetProjector.h>
+#include <Inventor/sensors/SoAlarmSensor.h>
 #include <QAction>
 #include <QActionGroup>
 #include <QApplication>
@@ -394,6 +397,13 @@ NavigationStyle::NavigationStyle()
 NavigationStyle::~NavigationStyle()
 {
     finalize();
+    if (this->pivotHideSensor) {
+        if (this->pivotHideSensor->isScheduled()) {
+            this->pivotHideSensor->unschedule();
+        }
+        delete this->pivotHideSensor;
+        this->pivotHideSensor = nullptr;
+    }
     delete this->animator;
 
     if (!pythonObject.is(nullptr)) {
@@ -596,8 +606,9 @@ void NavigationStyle::lookAtPoint(const SbVec2s screenpos)
 
 void NavigationStyle::lookAtPoint(const SbVec3f& position)
 {
-    this->rotationCenterFound = false;
     translateCamera(position - viewer->getFocalPoint());
+    this->rotationCenter = position;
+    this->rotationCenterFound = true;
 }
 
 SoCamera* NavigationStyle::getCamera() const
@@ -2365,6 +2376,32 @@ SbBool NavigationStyle::processMotionEvent(const SoMotion3Event* const ev)
         return false;
     }
 
+    // Resolve the auto-pivot once per gesture; a held puck streams events while a
+    // release sends a single zero-deflection one.
+    const SbTime spaceballNow = SbTime::getTimeOfDay();
+    const bool spaceballIdle = (spaceballNow - this->spaceballLastEventTime).getValue() > 0.3;
+    this->spaceballLastEventTime = spaceballNow;
+    const bool spaceballHasInput = ev->getTranslation().sqrLength() > 0.0F
+        || ev->getRotation() != SbRotation::identity();
+    if (spaceballHasInput) {
+        if (!this->spaceballGestureActive || spaceballIdle) {
+            this->spaceballGestureActive = true;
+            beginSpaceballPivotGesture();
+            // Re-stamp after the (synchronous, possibly slow) pick so its own latency
+            // isn't read as idle on the next event, which would re-pick in a loop.
+            this->spaceballLastEventTime = SbTime::getTimeOfDay();
+        }
+        // Keep the indicator up while events flow; it hides shortly after they stop.
+        armPivotHideTimer();
+    }
+    else {
+        if (this->spaceballGestureActive) {
+            this->spaceballGestureActive = false;
+            endSpaceballPivotGesture();
+        }
+        return true;
+    }
+
     SbViewVolume volume(camera->getViewVolume());
     SbVec3f center(volume.getSightPoint(camera->focalDistance.getValue()));
     float scale(volume.getWorldToScreenScale(center, 1.0));
@@ -2372,16 +2409,25 @@ SbBool NavigationStyle::processMotionEvent(const SoMotion3Event* const ev)
 
     SbVec3f dir = ev->getTranslation();
 
-    if (camera->getTypeId().isDerivedFrom(SoOrthographicCamera::getClassTypeId())) {
-        auto oCam = static_cast<SoOrthographicCamera*>(camera);
-        oCam->scaleHeight(1.0 + (dir[2] * 0.0001));
-        dir[2] = 0.0;  // don't move the cam for z translation.
+    const float zoom = dir[2] * 0.0001;
+    dir[2] = 0.0;
+    float zoomFactor = 1.0 + zoom;
+    if (zoomFactor < 0.1F) {
+        zoomFactor = 0.1F;
     }
 
-    // Use the active navigation rotation center mode for SpaceMouse rotations
+    if (camera->getTypeId().isDerivedFrom(SoOrthographicCamera::getClassTypeId())) {
+        static_cast<SoOrthographicCamera*>(camera)->scaleHeight(zoomFactor);
+    }
+
+    // The auto-pivot wins when it found geometry; otherwise use the configured mode.
     SbVec3f motionRotationCenter;
     bool useMotionRotationCenter = false;
-    if (this->rotationCenterMode & NavigationStyle::RotationCenterMode::BoundingBoxCenter) {
+    if (this->spaceballPivotValid) {
+        motionRotationCenter = this->spaceballPivot;
+        useMotionRotationCenter = true;
+    }
+    else if (this->rotationCenterMode & NavigationStyle::RotationCenterMode::BoundingBoxCenter) {
         useMotionRotationCenter = getObjectBoundingBoxCenter(motionRotationCenter);
     }
     else if (this->rotationCenterMode && this->rotationCenterFound) {
@@ -2415,6 +2461,12 @@ SbBool NavigationStyle::processMotionEvent(const SoMotion3Event* const ev)
         newPosition = center - (newDirection * camera->focalDistance.getValue());
     }
 
+    if (camera->getTypeId().isDerivedFrom(SoPerspectiveCamera::getClassTypeId())) {
+        const SbVec3f zoomPivot = useMotionRotationCenter ? motionRotationCenter : center;
+        newPosition = zoomPivot + (newPosition - zoomPivot) * zoomFactor;
+        camera->focalDistance.setValue(camera->focalDistance.getValue() * zoomFactor);
+    }
+
     newRotation.multVec(dir, dir);
     SbVec3f finalPosition = newPosition + (dir * translationFactor);
 
@@ -2425,6 +2477,117 @@ SbBool NavigationStyle::processMotionEvent(const SoMotion3Event* const ev)
     camera->touch();
 
     return true;
+}
+
+namespace
+{
+// Radius of the center pick "cone", as a fraction of the smaller viewport dimension.
+constexpr float spaceballApertureFraction = 0.15F;
+}  // namespace
+
+// Nearest geometry under the view center, used as the rotation pivot. One radius
+// SoRayPickAction (a single traversal vs the navlib path's 30-ray cone; the radius
+// also keeps the hit on-screen). Prefer the nearest face -- the radius otherwise lets
+// thin silhouette edges win, which the cone avoided by sampling mostly face area.
+bool NavigationStyle::pickViewCenterPivot(SbVec3f& result)
+{
+    if (!viewer) {
+        return false;
+    }
+    auto* const renderManager = viewer->getSoRenderManager();
+    if (!renderManager) {
+        return false;
+    }
+    SoNode* const sceneGraph = renderManager->getSceneGraph();
+    if (!sceneGraph) {
+        return false;
+    }
+
+    const SbViewportRegion& viewport = renderManager->getViewportRegion();
+    const SbVec2s size = viewport.getViewportSizePixels();
+    const short smaller = size[0] < size[1] ? size[0] : size[1];
+
+    SoRayPickAction rayPick(viewport);
+    rayPick.setPoint(SbVec2s(static_cast<short>(size[0] / 2), static_cast<short>(size[1] / 2)));
+    rayPick.setRadius(spaceballApertureFraction * static_cast<float>(smaller));
+    rayPick.setPickAll(true);
+    rayPick.apply(sceneGraph);
+
+    const SoPickedPointList& picked = rayPick.getPickedPointList();
+    if (picked.getLength() == 0) {
+        return false;
+    }
+
+    // The list is sorted nearest-first. Prefer the closest face hit so the pivot lands
+    // on the surface you are looking at instead of snapping to a nearby silhouette edge.
+    for (int i = 0; i < picked.getLength(); ++i) {
+        const SoPickedPoint* const point = picked[i];
+        const SoDetail* const detail = point->getDetail();
+        if (detail && detail->isOfType(SoFaceDetail::getClassTypeId())) {
+            result = point->getPoint();
+            return true;
+        }
+    }
+
+    // No face in the disc -- fall back to the nearest hit of any kind.
+    result = picked[0]->getPoint();
+    return true;
+}
+
+void NavigationStyle::beginSpaceballPivotGesture()
+{
+    this->spaceballPivotValid = false;
+
+    // Gated by a parameter so it can be toggled at runtime without a rebuild.
+    const bool enabled = App::GetApplication()
+                             .GetParameterGroupByPath("User parameter:BaseApp/Spaceball/Motion")
+                             ->GetBool("ViewCenterPivot", true);
+    if (!enabled) {
+        return;
+    }
+
+    SbVec3f hit;
+    if (pickViewCenterPivot(hit)) {
+        this->spaceballPivot = hit;
+        this->spaceballPivotValid = true;
+        // Also align the perspective focal distance so zoom pivots at the hit point.
+        setRotationCenter(hit);
+        // Reuse the viewer's native rotation-center indicator (the mouse drag path's).
+        viewer->showRotationCenter(true);
+        viewer->changeRotationCenterPosition(hit);
+    }
+}
+
+void NavigationStyle::endSpaceballPivotGesture()
+{
+    this->spaceballPivotValid = false;
+    if (this->pivotHideSensor && this->pivotHideSensor->isScheduled()) {
+        this->pivotHideSensor->unschedule();
+    }
+    viewer->showRotationCenter(false);
+}
+
+// Re-armed on every event, so it only fires once the puck stops (a release sends no
+// zero event); the delayed hide also schedules the redraw.
+void NavigationStyle::armPivotHideTimer()
+{
+    constexpr double pivotHideDelay = 0.1;  // seconds after the last event
+    if (!this->pivotHideSensor) {
+        this->pivotHideSensor = new SoAlarmSensor(pivotHideSensorCB, this);
+    }
+    this->pivotHideSensor->unschedule();
+    this->pivotHideSensor->setTimeFromNow(SbTime(pivotHideDelay));
+    this->pivotHideSensor->schedule();
+}
+
+void NavigationStyle::pivotHideSensorCB(void* data, SoSensor*)
+{
+    auto* const self = static_cast<NavigationStyle*>(data);
+    self->spaceballGestureActive = false;
+    self->spaceballPivotValid = false;
+    if (self->viewer) {
+        self->viewer->showRotationCenter(false);
+    }
 }
 
 SbBool NavigationStyle::processKeyboardEvent(const SoKeyboardEvent* const event)

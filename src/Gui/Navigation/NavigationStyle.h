@@ -51,6 +51,7 @@ class SoMotion3Event;
 class SoQtViewer;
 class SoCamera;
 class SoSensor;
+class SoAlarmSensor;
 class SbSphereSheetProjector;
 
 // NOLINTBEGIN(cppcoreguidelines-avoid*, readability-avoid-const-params-in-decls)
@@ -242,6 +243,16 @@ public:
     virtual SbBool processEvent(const SoEvent* const ev);
     virtual SbBool processMotionEvent(const SoMotion3Event* const ev);
     virtual SbBool processKeyboardEvent(const SoKeyboardEvent* const event);
+
+    // SpaceMouse auto-pivot: at gesture start, pick the geometry under the view
+    // center and rotate around it (mirrors the navlib path, built from the camera).
+    bool pickViewCenterPivot(SbVec3f& result);
+    void beginSpaceballPivotGesture();
+    void endSpaceballPivotGesture();
+    // The Linux SpaceMouse path stops sending events on release (no zero event), so
+    // hide the pivot via a one-shot timer that is re-armed on every motion event.
+    void armPivotHideTimer();
+    static void pivotHideSensorCB(void* data, SoSensor* sensor);
     virtual SbBool processClickEvent(const SoMouseButtonEvent* const event);
     virtual SbBool processWheelEvent(const SoMouseWheelEvent* const event);
 
@@ -442,6 +453,13 @@ private:
     std::optional<OrbitDragState> orbitDrag;
     float sensitivity;
     SbBool resetcursorpos;
+
+    // SpaceMouse view-center auto-pivot state (see pickViewCenterPivot()).
+    SbVec3f spaceballPivot {0.0F, 0.0F, 0.0F};
+    bool spaceballPivotValid {false};
+    bool spaceballGestureActive {false};
+    SbTime spaceballLastEventTime;
+    SoAlarmSensor* pivotHideSensor {nullptr};
 
 #if (COIN_MAJOR_VERSION * 100 + COIN_MINOR_VERSION * 10 + COIN_MICRO_VERSION < 403)
     SbSphere boundingSphere;
