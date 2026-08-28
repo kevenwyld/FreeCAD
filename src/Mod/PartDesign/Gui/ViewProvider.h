@@ -87,6 +87,8 @@ public:
     /// Reuse the task-panel preview infrastructure for tree preselection.
     bool showPreselectPreview(bool on) override;
 
+    void showPreview(bool enable) override;
+
     /// Provides preview shape
     Part::TopoShape getPreviewShape() const override;
     /// Toggles visibility of the preview
@@ -126,6 +128,9 @@ protected:
     bool isSetTipIcon {false};
 
 private:
+    /// Attach or detach the cutting tool preview to match previewToolShape.
+    void syncToolPreview();
+
     Gui::CoinPtr<PartGui::SoPreviewShape> pcToolPreview;
     bool previewToolShape {true};
 };
