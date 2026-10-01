@@ -2397,6 +2397,11 @@ SbBool NavigationStyle::processMotionEvent(const SoMotion3Event* const ev)
     float scale(volume.getWorldToScreenScale(center, 1.0));
     float translationFactor = scale * .0001;
 
+    // Optionally change focal distance with Z, so Z speed scales with distance to the focal point.
+    const bool scaleZoom = App::GetApplication()
+                               .GetParameterGroupByPath("User parameter:BaseApp/Spaceball/Motion")
+                               ->GetBool("ScaleZoomWithDistance", false);
+
     SbVec3f dir = ev->getTranslation();
 
     if (camera->getTypeId().isDerivedFrom(SoOrthographicCamera::getClassTypeId())) {
@@ -2413,7 +2418,11 @@ SbBool NavigationStyle::processMotionEvent(const SoMotion3Event* const ev)
     }
     else if (this->rotationCenterMode && this->rotationCenterFound) {
         motionRotationCenter = this->rotationCenter;
-        useMotionRotationCenter = true;
+        // With scaled zoom, a rotation center off the focal plane is stale, e.g. after fit all.
+        const float offset = (motionRotationCenter - center).dot(volume.getProjectionDirection());
+        useMotionRotationCenter = !scaleZoom
+            || camera->getTypeId().isDerivedFrom(SoOrthographicCamera::getClassTypeId())
+            || std::abs(offset) <= 0.01F * camera->focalDistance.getValue();
     }
 
     const SbRotation currentRotation(camera->orientation.getValue());
@@ -2442,12 +2451,17 @@ SbBool NavigationStyle::processMotionEvent(const SoMotion3Event* const ev)
         newPosition = center - (newDirection * camera->focalDistance.getValue());
     }
 
+    const float focalDistance = camera->focalDistance.getValue() + dir[2] * translationFactor;
+
     newRotation.multVec(dir, dir);
     SbVec3f finalPosition = newPosition + (dir * translationFactor);
 
     camera->enableNotify(false);
     setCameraOrientationValue(camera, newRotation, OrientationChangeSource::Interactive);
     camera->position = finalPosition;
+    if (scaleZoom) {
+        camera->focalDistance = focalDistance;
+    }
     camera->enableNotify(true);
     camera->touch();
 

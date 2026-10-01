@@ -62,6 +62,16 @@
          </property>
         </widget>
        </item>
+       <item>
+        <widget class="QCheckBox" name="CBScaleZoomWithDistance">
+         <property name="toolTip">
+          <string>Perspective only: push/pull slows near the rotation center and speeds up away from it.</string>
+         </property>
+         <property name="text">
+          <string>Scale zoom speed with distance</string>
+         </property>
+        </widget>
+       </item>
       </layout>
      </item>
      <item>
