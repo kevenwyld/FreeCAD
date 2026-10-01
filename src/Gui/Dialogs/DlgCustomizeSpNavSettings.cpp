@@ -61,6 +61,8 @@ void DlgCustomizeSpNavSettings::setupConnections()
             this, &DlgCustomizeSpNavSettings::on_CBDominant_clicked);
     connect(ui->CBFlipYZ, &QCheckBox::clicked,
             this, &DlgCustomizeSpNavSettings::on_CBFlipYZ_clicked);
+    connect(ui->CBScaleZoomWithDistance, &QCheckBox::clicked,
+            this, &DlgCustomizeSpNavSettings::on_CBScaleZoomWithDistance_clicked);
     connect(ui->CBRotations, &QCheckBox::clicked,
             this, &DlgCustomizeSpNavSettings::on_CBRotations_clicked);
     connect(ui->CBTranslations, &QCheckBox::clicked,
@@ -158,6 +160,9 @@ void DlgCustomizeSpNavSettings::initialize()
 {
     ui->CBDominant->setChecked(spaceballMotionGroup()->GetBool("Dominant", false));
     ui->CBFlipYZ->setChecked(spaceballMotionGroup()->GetBool("FlipYZ", false));
+    ui->CBScaleZoomWithDistance->setChecked(
+        spaceballMotionGroup()->GetBool("ScaleZoomWithDistance", false)
+    );
     ui->CBRotations->setChecked(spaceballMotionGroup()->GetBool("Rotations", true));
     ui->CBTranslations->setChecked(spaceballMotionGroup()->GetBool("Translations", true));
     ui->SliderGlobal->setValue(spaceballMotionGroup()->GetInt("GlobalSensitivity", 0));
@@ -221,6 +226,11 @@ void DlgCustomizeSpNavSettings::on_CBDominant_clicked()
 void DlgCustomizeSpNavSettings::on_CBFlipYZ_clicked()
 {
     spaceballMotionGroup()->SetBool("FlipYZ", ui->CBFlipYZ->isChecked());
+}
+
+void DlgCustomizeSpNavSettings::on_CBScaleZoomWithDistance_clicked()
+{
+    spaceballMotionGroup()->SetBool("ScaleZoomWithDistance", ui->CBScaleZoomWithDistance->isChecked());
 }
 
 void DlgCustomizeSpNavSettings::on_CBRotations_clicked()
