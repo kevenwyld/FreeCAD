@@ -2482,12 +2482,17 @@ SbBool NavigationStyle::processMotionEvent(const SoMotion3Event* const ev)
         newPosition = center - (newDirection * camera->focalDistance.getValue());
     }
 
+    // Z moves the camera along the view axis. Change the focal distance by the same amount so
+    // the focal point, and a rotation center on it, stay put and zoom speed follows distance.
+    const float focalDistance = camera->focalDistance.getValue() + dir[2] * translationFactor;
+
     newRotation.multVec(dir, dir);
     SbVec3f finalPosition = newPosition + (dir * translationFactor);
 
     camera->enableNotify(false);
     setCameraOrientationValue(camera, newRotation, OrientationChangeSource::Interactive);
     camera->position = finalPosition;
+    camera->focalDistance = focalDistance;
     camera->enableNotify(true);
     camera->touch();
 
